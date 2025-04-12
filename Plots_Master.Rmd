@@ -1,0 +1,441 @@
+---
+title: "Plots_Master"
+author: "Aji John and Kavya Pradhan"
+date: '2024-08-25'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+This code is to create all the plots that we will use in publications/presentations
+
+
+```{r workspace, message = F, echo = F}
+rm(list=ls())
+#First load all necessary packages
+library(ggplot2)
+library(tidyverse)
+library(lme4)
+library(sjPlot)
+library(patchwork)
+library(ggpubr)
+```
+
+### Raw temperature plots
+#### 1. Load data for raw plots
+```{r load offset data, message = F, warning = F}
+indir <- getwd()
+regional_Trim <- read.csv(paste0(indir, "/data/plottingData/regional_Trim.csv"))
+local_Trim <- read.csv(paste0(indir, "/data/plottingData/local_Trim.csv"))
+localWithHobo <- read.csv(paste0(indir, "/data/plottingData/localWithHobo.csv"))
+regionalWithHobo <- read.csv(paste0(indir, "/data/plottingData/regionalWithHobo.csv"))
+mmet_june <- read_csv("./data/plottingData/mmetjune2021.csv")
+```
+
+#### 2. Fix factors for ploting
+```{r plot raw temps, message = F, warning = F}
+localWithHobo$TRT <- factor(localWithHobo$TRT, levels = c("OG", "CON", "RClearing", "THIN"))
+regional_Trim_augmented <- regional_Trim %>% mutate(Day= lubridate::day(Date)) %>% as.data.frame()
+regionalWithHobo$TRT <- factor(regionalWithHobo$TRT, levels = c("OG", "CON", "RClearing", "THIN"))
+
+```
+
+### Comparative Plots
+
+```{r, tidy=FALSE,warning=FALSE,error=FALSE,error=FALSE}
+
+MTControlThinOG<- localWithHobo %>%   filter(Day %in%  c(23:30)) %>%  
+  group_by(Day,TRT) %>%
+   summarise(mt = mean(Temp)) %>% 
+   dplyr::select(TRT,Day,mt) %>% as.data.frame()
+
+
+colnames(MTControlThinOG) <- c("TRT" ,"Day",       "mt")
+
+MTRegional   <- regional_Trim_augmented %>% mutate(TRT='Regional',Day = lubridate::day(Date),mth= lubridate::month(Date)) %>% filter(Day %in%  c(23:30), mth== 6) %>% 
+  dplyr::select(TRT,Day,tmeanC) %>% as.data.frame()
+colnames(MTRegional) <- c("TRT" ,"Day",       "mt")
+
+MTClearing   <- mmet_june %>% mutate(TRT='Clearing') %>% filter(day %in%  c(23:30)) %>% group_by(day,TRT) %>%
+  summarise(mt = mean(MeanMM))  %>% 
+  dplyr::select(TRT,day,mt) %>% 
+  as.data.frame()
+
+colnames(MTClearing) <- c("TRT" ,"Day",       "mt")
+
+MT <- rbind(MTControlThinOG,MTClearing,MTRegional)
+posterPal5 <- c("#414487FF", "#2A788EFF", "#7AD151FF", "#ffc107",  "#FDE725FF")
+posterPal5 <- c("#006d2c", "#41b6c4", "#7AD151FF", "#ffc107",  "#FDE725FF")
+posterPal5 <- c("#238443", "#004529", "#ffc107", "#7AD151FF", "#FDE725FF")
+posterPal5 <- c("#ffc107", "#238443", "#004529", "#FDE725FF", "#7AD151FF")
+MT %>% filter(Day %in% c(23:30)) %>%
+  ggplot()+
+  annotate("rect", xmin=24,
+           xmax = 28,
+           ymin = -Inf,
+           ymax = Inf, alpha=0.5, fill="#BDBDBD") +
+  geom_smooth(aes(Day,mt,color=TRT, linetype = TRT),se=F, size = 3) +
+  geom_point(aes(Day,mt,color=TRT, shape = TRT, fill = TRT), size = 7) +
+  
+  ggpubr::theme_pubclean(base_size = 50) +
+  scale_colour_manual(
+    values = posterPal5,
+    labels = c("Clearing"="Clear-cut", "CON"="Control", "Regional","OG"="Old growth","THIN"="Thinned")
+  )  +
+  labs(x= "Time (Day in June)", y= "Daily Mean Temperature (°C)",color="") + 
+  scale_shape_manual(values = c(15,16,17,23,25), guide = 'none') + scale_fill_manual(values = posterPal5, guide = 'none') + scale_x_continuous(breaks = seq(23, 30, by =1)) + scale_linetype_manual(values = c(1,2,3,4,5), guide = 'none')
+
+   
+
+ggsave("figs/fig3b-alltemps-comparemeans.jpg", width = 45, height = 32, units = "cm")
+ggsave("figs/fig3b-alltemps-comparemeans.pdf", width = 45, height = 32, units = "cm")
+``` 
+
+
+### Hottest day map
+
+#### 1. Load the data for mapping
+```{r, message = F, warning = F}
+library(AOI)
+library(climateR)
+# 1. Open jpeg file
+png(filename = "figs/wahotday.png")
+AOIWA = aoi_get(state = "WA")
+#AOIWA = aoi_get(list(47,-124 , 200,300)) # lat, long, height, width # change this to change extent of grid data
+TempHot = AOIWA %>% getGridMET(varname = "tmmx", startDate = "2021-06-27")
+#> Spherical geometry (s2) switched off
+#> Spherical geometry (s2) switched on
+TempHot$gridmet_tmax_C <- weathermetrics::kelvin.to.celsius(TempHot$daily_maximum_temperature)
+
+aoi_ells <- raster::extent(c(-123.92280 ,-123.88176,46.35758  , 46.42449))
+p <- as(aoi_ells, 'SpatialPolygons') 
+```
+
+#### 2. Plot the hottest day with ggplot
+```{r, message = F, warning = F}
+library(terra)
+library(tidyterra)
+ggplot() +
+  geom_spatraster(data = TempHot$gridmet_tmax_C, aes(fill = `tmmx_2021-06-27`)) +
+  # You can use coord_sf
+  coord_sf(crs = 4326) +
+  scale_fill_hypso_c() +
+  ggpubr::theme_pubclean()+
+  labs(fill="Tmax C")
+ggsave("figs/fig3a-hottestDay_ggplot.pdf", width = 30, height = 32, units = "cm")
+```
+
+#### 2. Make the hottest day map with raster is
+```{r, message = F, warning = F}
+hottestDay <- rasterVis::levelplot(TempHot$daily_maximum_temperature, margin = FALSE, main = "Washington State, 06/27/2021", col.regions = viridisLite::viridis(100)) +
+  latticeExtra::layer(sp::sp.polygons(p), packets = 1)
+hottestDay
+ggsave("figs/3a-alt-hottestDay.pdf", width = 45, height = 32, units = "cm")
+```
+
+### Offset plots
+#### 1. Load data for offset plots
+
+```{r load offset data, message = F, warning = F}
+indir <- getwd()
+localWithHobo <- read.csv(paste0(indir, "/data/plottingData/localWithHobo.csv"))
+regionalWithHobo <- read.csv(paste0(indir, "/data/plottingData/regionalWithHobo.csv"))
+```
+
+
+#### 3. Regional plot
+Plot the raw data for regional comparision
+Plot the raw temperatures
+```{r plot raw temps, message = F, warning = F}
+
+regionalWithHobo$TRT <- factor(regionalWithHobo$TRT, levels = c("OG", "CON", "RClearing", "THIN"))
+
+posterPal <- c("#238443", "#004529", "#ffc107", "#7AD151FF")
+posterPal <- c("#239000", "#004529", "#ffc107", "#7AD140" )
+
+rawTempsStudy <- regionalWithHobo %>%  group_by(Day,TRT) %>%
+  
+  summarise(mt = mean(Temp)) %>%
+  ggplot() + 
+  annotate("rect", xmin=24,
+               xmax = 28,
+               ymin = -Inf,
+               ymax = Inf, alpha=0.5, fill="#BDBDBD") +
+  geom_point(aes(Day,mt,color=TRT), size = 7) +
+  geom_line(aes(Day,mt,color=TRT), size = 2) +
+  geom_point(aes(Day,tmeanC,color='Regional'), data=regional_Trim_augmented, size = 7) +
+  geom_line(aes(Day,tmeanC,color='Regional'), data=regional_Trim_augmented, size = 2) +
+  
+  ggpubr::theme_pubclean( base_size = 50)+
+  labs(x= "Time (Day in June)", y= " Mean Temperature (°C)",color="")+
+  scale_x_continuous(breaks = seq(1,30, by = 2)) +
+  scale_colour_manual(
+    values = posterPal,
+    labels = c("CON"="Control", "Regional"="Regional", "THIN"="Thinned", "OG" = "Old Growth")
+  )
+
+```
+
+#### 2. Local plot
+Plot the raw data for local comparision
+Plot the raw temperatures
+```{r plot raw temps, message = F, warning = F}
+posterPal4 <- c("#238443", "#004529", "#ffc107", "#7AD151FF")
+posterPal4 <- c("#239000", "#004529", "#ffc107", "#7AD140" )
+rawTempsLocalStudy <- localWithHobo %>%  mutate(typ=Type ) %>% group_by(Day,TRT,typ) %>%
+  
+   summarise(mt = mean(Temp)) %>%
+      ggplot() +
+   annotate("rect", xmin=24,
+               xmax = 28,
+               ymin = -Inf,
+               ymax = Inf, alpha=0.5, fill="#BDBDBD")  +
+  geom_point(aes(Day,mt,color=TRT, shape = typ), size = 7) +
+  geom_line(aes(Day,mt,color=TRT,linetype=typ), size = 3, show.legend = F) +
+  geom_point(aes(Day,MeanMean,color='RClearing', shape = Type), data=local_Trim, size = 7) +
+  geom_line(aes(Day,MeanMean,color='RClearing',linetype=Type), data=local_Trim, size = 3, show.legend = F) +
+  
+  ggpubr::theme_pubclean( base_size = 50)+
+  labs(x= "Time (Day in June)", y= " Mean Temperature (°C)",color="",linetype="")+
+scale_x_continuous(breaks = c(1:30)) +
+ scale_colour_manual(
+    values = posterPal4,
+ labels = c("CON"="Control", "RClearing"="Clear-cut", "THIN"="Thinned", "OG" = "Old Growth")
+)  +
+  scale_shape_manual(
+    values = c(17,19),labels=c("Air"="Air","Soil"="Surface")
+) +
+  scale_linetype_manual(values = c("solid","dashed"),) + theme(legend.box="vertical", legend.box.margin=margin(-10,-10,-10,-10), legend.margin=margin(0,0,0,0), legend.title = element_blank())
+
+```
+
+#### 2. Local plots
+
+Plot the offsets for Mean. Note that greater offset == more cooling effect
+```{r plot mean offset, message = F, warning = F}
+posterPal3 <- c("#239000", "#004529", "#7AD140")
+meanLocalOffset <- 
+  localWithHobo %>%  mutate(typ=Type) %>% group_by(Day,TRT,typ) %>%
+  summarise(mtHobs = mean(MeanOffset)) %>% spread(typ,mtHobs) %>%
+    ggplot() +
+   annotate("rect", xmin=24,
+               xmax = 28,
+               ymin = -Inf,
+               ymax = Inf, alpha=0.5, fill="#BDBDBD") +
+  geom_point(aes(Day,Air,color=TRT),shape=17, size = 7 , show.legend = F) +
+  geom_line(aes(Day,Air,color=TRT),linetype=1, size = 3, show.legend = F) +
+  geom_point(aes(Day,Soil,color=TRT) ,shape=19, size = 7, show.legend = F) +
+  geom_line(aes(Day,Soil,color=TRT),linetype=2, size = 3, show.legend = F) + 
+ ggpubr::theme_pubclean( base_size = 50)+
+  labs(x= "Time (Day in June)", y= "Mean Cooling effect\n (°C)",color="")+
+scale_x_continuous(breaks = seq(1:30)) +
+    scale_colour_manual(
+    values = posterPal3,
+  labels = c("CON"="Control", "THIN"="Thinned", "OG" = "Old Growth")
+)
+
+```
+
+
+Plot the offsets for Diel variation 
+```{r plot diel offset, message = F, warning = F}
+diurnalLocalOffset <- localWithHobo %>% mutate(typ=Type ) %>% group_by(Day,TRT,typ) %>%
+  summarise(mtHobs = mean(RangeOffset)) %>% spread(typ,mtHobs) %>%
+    ggplot() +
+   annotate("rect", xmin=24,
+               xmax = 28,
+               ymin = -Inf,
+               ymax = Inf, alpha=0.5, fill="#BDBDBD")+
+  geom_point(aes(Day,Air,color=TRT),shape=17, size = 7 , show.legend = F) +
+  geom_line(aes(Day,Air,color=TRT),linetype=1, size = 3 , show.legend = F) +
+  geom_point(aes(Day,Soil,color=TRT) ,shape=19, size = 7 , show.legend = F) +
+  geom_line(aes(Day,Soil,color=TRT),linetype=2, size = 3 , show.legend = F) + 
+
+ ggpubr::theme_pubclean( base_size = 50)+
+  labs(x= "Time (Day in June)", y= "Offset Diel Variation \n (°C)",color="")+
+scale_x_continuous(breaks = c(1:30))  +
+    scale_colour_manual(
+    values = posterPal3,
+  labels = c("CON"="Control", "THIN"="Thinned", "OG" = "Old Growth")
+) + scale_linetype_manual(values=c("solid", "longdash"))
+```
+
+Plot the offsets for min
+```{r plot minn offset, message = F, warning = F}
+minLocalOffset <- 
+  localWithHobo %>%  mutate(typ=Type) %>% group_by(Day,TRT,typ) %>%
+  summarise(mtHobs = mean(MinOffset)) %>% spread(typ,mtHobs) %>%
+    ggplot() +
+   annotate("rect", xmin=24,
+               xmax = 28,
+               ymin = -Inf,
+               ymax = Inf, alpha=0.5, fill="#BDBDBD") +
+  geom_point(aes(Day,Air,color=TRT),shape=17, size = 7 , show.legend = F) +
+  geom_line(aes(Day,Air,color=TRT),linetype=1, size = 3 , show.legend = F) +
+  geom_point(aes(Day,Soil,color=TRT) ,shape=19, size = 7 , show.legend = F) +
+  geom_line(aes(Day,Soil,color=TRT),linetype=2, size = 3 , show.legend = F) + 
+ ggpubr::theme_pubclean( base_size = 50)+
+  labs(x= "Time (Day in June)", y= "Min Cooling effect \n (°C)",color="")+
+scale_x_continuous(breaks = c(1:30)) +
+    scale_colour_manual(
+    values = posterPal3,
+  labels = c("CON"="Control", "THIN"="Thinned", "OG" = "Old Growth")
+)
+
+```
+
+Plot the offsets for max
+```{r plot max offset, message = F, warning = F}
+maxLocalOffset <- 
+  localWithHobo %>%  mutate(typ=Type) %>% group_by(Day,TRT,typ) %>%
+  summarise(mtHobs = mean(MaxOffset)) %>% spread(typ,mtHobs) %>%
+    ggplot() +
+   annotate("rect", xmin=24,
+               xmax = 28,
+               ymin = -Inf,
+               ymax = Inf, alpha=0.5, fill="#BDBDBD") +
+  geom_point(aes(Day,Air,color=TRT),shape=17, size = 7  , show.legend = F) +
+  geom_line(aes(Day,Air,color=TRT),linetype=1, size = 3 , show.legend = F) +
+  geom_point(aes(Day,Soil,color=TRT) ,shape=19, size = 7 , show.legend = F) +
+  geom_line(aes(Day,Soil,color=TRT),linetype=2, size = 3 , show.legend = F) + 
+ ggpubr::theme_pubclean( base_size = 50)+
+  labs(x= "Time (Day in June)", y= "Max Cooling effect \n (°C)",color="")+
+scale_x_continuous(breaks = c(1:30)) +
+    scale_colour_manual(
+    values = posterPal3,
+  labels = c("CON"="Control", "THIN"="Thinned", "OG" = "Old Growth")
+)
+
+```
+
+
+#### Regional plots
+
+Plot the offsets for Mean. Note that greater offset == more cooling effect
+```{r plot mean offset, message = F, warning = F}
+meanRegionalOffset <- 
+  regionalWithHobo %>%  mutate(typ=Type) %>% group_by(Day,TRT,typ) %>%
+  summarise(mtHobs = mean(MeanOffset)) %>% spread(typ,mtHobs) %>%
+    ggplot() +
+   annotate("rect", xmin=24,
+               xmax = 28,
+               ymin = -Inf,
+               ymax = Inf, alpha=0.5, fill="#BDBDBD") +
+  geom_point(aes(Day,Air,color=TRT), size = 7 , show.legend = F) +
+  geom_line(aes(Day,Air,color=TRT), size = 3, show.legend = F) +
+ ggpubr::theme_pubclean( base_size = 50)+
+  labs(x= "Time (Day in June)", y= "Mean Cooling effect\n (°C)",color="")+
+scale_x_continuous(breaks = seq(1,30,2)) +
+    scale_colour_manual(
+    values = posterPal3,
+  labels = c("CON"="Control", "THIN"="Thinned", "OG" = "Old Growth")
+)
+
+```
+
+Plots for min
+```{r plot mean offset, message = F, warning = F}
+minRegionalOffset <- 
+  #filter(Day %in% c(14:30)) %>% 
+  regionalWithHobo %>%  mutate(typ=Type) %>% group_by(Day,TRT,typ) %>%
+  summarise(mtHobs = mean(MinOffset)) %>% spread(typ,mtHobs) %>%
+    ggplot() +
+   annotate("rect", xmin=24,
+               xmax = 28,
+               ymin = -Inf,
+               ymax = Inf, alpha=0.5, fill="#BDBDBD") +
+  geom_point(aes(Day,Air,color=TRT), size = 7 , show.legend = F) +
+  geom_line(aes(Day,Air,color=TRT), size = 3, show.legend = F) +
+  #geom_point(aes(Day,Soil,color=TRT) ,shape=19, size = 7) +
+  #geom_line(aes(Day,Soil,color=TRT),linetype=2, size = 3) + 
+ ggpubr::theme_pubclean( base_size = 50)+
+  labs(x= "Time (Day in June)", y= "Min Cooling effect\n (°C)",color="")+
+scale_x_continuous(breaks = seq(1,30,2)) +
+    scale_colour_manual(
+    values = posterPal3,
+  labels = c("CON"="Control", "THIN"="Thinned", "OG" = "Old Growth")
+)
+minRegionalOffset
+
+```
+
+
+Plots for max
+```{r plot mean offset, message = F, warning = F}
+maxRegionalOffset <- 
+  regionalWithHobo %>%  mutate(typ=Type) %>% group_by(Day,TRT,typ) %>%
+  summarise(mtHobs = mean(MaxOffset)) %>% spread(typ,mtHobs) %>%
+    ggplot() +
+   annotate("rect", xmin=24,
+               xmax = 28,
+               ymin = -Inf,
+               ymax = Inf, alpha=0.5, fill="#BDBDBD") +
+  geom_point(aes(Day,Air,color=TRT), size = 7 , show.legend = F) +
+  geom_line(aes(Day,Air,color=TRT), size = 3, show.legend = F) +
+ ggpubr::theme_pubclean( base_size = 50)+
+  labs(x= "Time (Day in June)", y= "Max Cooling effect\n (°C)",color="")+
+scale_x_continuous(breaks = seq(1,30,2)) +
+    scale_colour_manual(
+    values = posterPal3,
+  labels = c("CON"="Control", "THIN"="Thinned", "OG" = "Old Growth")
+)
+maxRegionalOffset
+
+```
+
+
+Plots for diel
+```{r plot diurnal regional, message = F, warning = F}
+diurnalRegionalOffset <- 
+  regionalWithHobo %>%  mutate(typ=Type) %>% group_by(Day,TRT,typ) %>%
+  summarise(mtHobs = mean(RangeOffset)) %>% spread(typ,mtHobs) %>%
+    ggplot() +
+   annotate("rect", xmin=24,
+               xmax = 28,
+               ymin = -Inf,
+               ymax = Inf, alpha=0.5, fill="#BDBDBD") +
+  geom_point(aes(Day,Air,color=TRT), size = 7, show.legend = F ) +
+  geom_line(aes(Day,Air,color=TRT), size = 3, show.legend = F) +
+ ggpubr::theme_pubclean( base_size = 50)+
+  labs(x= "Time (Day in June)", y= "Diel variation offset\n (°C)",color="")+
+scale_x_continuous(breaks = seq(1,30,2)) +
+    scale_colour_manual(
+    values = posterPal3,
+  labels = c("CON"="Control", "THIN"="Thinned", "OG" = "Old Growth")
+)
+diurnalRegionalOffset
+
+
+```
+
+
+
+### Raw and Offset together plots
+#### 2. Local plot
+
+Then put them together and save
+```{r, message = F, warning = F}
+(rawTempsLocalStudy|(minLocalOffset / maxLocalOffset / meanLocalOffset / diurnalLocalOffset + plot_layout(guides = 'auto')) )+ plot_layout(guides = 'auto')+
+  plot_annotation(tag_levels = 'A')
+
+ggsave("figs/fig4-allLocalPlots.pdf", width = 90, height = 80, units = "cm")
+```
+
+
+####3. Regional plot
+Then put them together and save
+```{r, message = F, warning = F}
+(rawTempsStudy|(minRegionalOffset / maxRegionalOffset / meanRegionalOffset / diurnalRegionalOffset + plot_layout(guides = 'auto')) )+ plot_layout(guides = 'auto')+
+  plot_annotation(tag_levels = 'A')
+
+ggsave("figs/fig5-allRegionallPlots.pdf", width = 90, height = 80, units = "cm")
+```
+
+
+
+
+
